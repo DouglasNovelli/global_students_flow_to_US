@@ -1,0 +1,250 @@
+---
+title: "Origens dos estudantes de intercâmbio nos EUA"
+author: "Douglas H. Novelli"
+output:
+  html_document:
+    toc: yes
+    toc_float: true
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1. Introdução
+
+O estudo visa verificar se o número de indivíduos matriculados em instituições de ensino estadunidenses está relacionado a região sociopolítica de seus países de origem.
+
+Utiliza o pacote `tidyverse`, para limpeza e organização dos dados; e os pacotes `rstatix` e `stats`, para realização de parte de suas análises estatísticas.
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(rstatix)
+library(stats)
+```
+
+## 2. Importação e limpeza dos dados
+
+Serão utilizados três conjuntos de dados:
+
+1.  Número e local de origem dos estudantes extrangeiros em instituições de ensino estadunidenses, empregando dados da instituição [Open Doors](https://opendoorsdata.org/);
+2.  População de cada Estado, empregando dados do [Banco Mundial](https://data.worldbank.org/indicator/SP.POP.TOTL); e
+3.  Região sociopolítica, definida com base nos [grupos regionais das Nações Unidas](https://www.un.org/dgacm/en/content/regional-groups).
+
+Os dados em questão foram coletados previamente, sendo disponibilizados na pasta `/datasets`.
+
+É feita a opção por trabalhar com dados de 2019, haja visto que a pandemia de COVID-19 pode ter tido efeitos inesperados sobre o número de estudantes estrangeiros.
+
+```{r message=FALSE, warning=FALSE}
+students <- read_csv2("datasets/census.csv") %>%
+  select("Place of Origin", "2019/20") %>%
+  rename("n_students" = "2019/20") %>%
+  mutate(n_students = as.numeric(n_students))
+
+population <- read_csv2("datasets/population.csv") %>%
+  select("Country Name", "2019") %>%
+  rename("total_pop" = "2019")
+
+un_group <- read_csv2("datasets/un_group.csv")
+```
+
+Uma primeira tentativa de junção dos dados resulta em um banco de dados com 164 observações completas, ao invés das 192 esperadas (193 Estados-membros da ONU, menos os EUA), revelando problemas na padronização de suas nomenclaturas.
+
+```{r}
+df <- un_group %>%
+  left_join(population, by = c("Country" = "Country Name")) %>%
+  left_join(students, by = c("Country" = "Place of Origin"))
+
+count(drop_na(df))
+```
+
+Os blocos de códigos abaixo listam os Estados cuja nomenclatura precisa ser padronizada:
+
+```{r}
+#population
+df %>%
+  filter(is.na(total_pop)) %>%
+  select(Country) %>%
+  arrange(Country) 
+```
+
+```{r}
+#students
+df %>%
+  filter(is.na(n_students)) %>%
+  select(Country) %>%
+  arrange(Country)
+```
+
+A partir dessas listas, se extrai as seguintes alterações, necessárias para a padronização da base:
+
+```{r}
+un_group <- un_group %>%
+  mutate(
+    Country = recode(Country,
+                     "Bolivia (Plurinational State of)" = "Bolivia",
+                     "Iran (Islamic Republic of)" = "Iran",
+                     "Micronesia (Federated States of)" = "Micronesia",
+                     "Republic of Moldova" = "Moldova",
+                     "Saint Kitts and Nevis" = "St. Kitts and Nevis",
+                     "Saint Lucia" = "St. Lucia",
+                     "Saint Vincent and the Grenadines" = "St. Vincent and the Grenadines",
+                     "United Kingdom of Great Britain and Northern Ireland" = "United Kingdom",
+                     "United Republic of Tanzania" = "Tanzania",
+                     "Venezuela (Bolivarian Republic of)" = "Venezuela",
+                     "Viet Nam" = "Vietnam")
+  )
+                     
+population <- population %>%
+  rename(Country = `Country Name`) %>%
+  mutate(
+    Country = recode(Country,
+                     "Rep. Congo" = "Congo",
+                     "Cote d'Ivoire" = "Côte d'Ivoire",
+                     "Korea ( Dem. People's Rep.)" = "Democratic People's Republic of Korea",
+                     "Dem. Rep. Congo" = "Democratic Republic of the Congo",
+                     "Kyrgyz Republic" = "Kyrgyzstan",
+                     "Lao PDR" = "Lao People's Democratic Republic",
+                     "Korea (Rep.)" = "Republic of Korea",
+                     "Slovak Republic" = "Slovakia",
+                     "Turkiye" = "Türkiye")
+  )
+
+students <- students %>%
+  rename(Country = `Place of Origin`) %>%
+  mutate(
+    Country = recode(Country,
+                     "Brunei" = "Brunei Darussalam",
+                     "Congo, Republic of the (Brazzaville)" = "Congo",
+                     "Côte d’Ivoire" = "Côte d'Ivoire",
+                     "Czech Republic" = "Czechia",
+                     "North Korea" = "Democratic People's Republic of Korea",
+                     "Congo, Dem. Rep. of the (Kinshasa)" = "Democratic Republic of the Congo",
+                     "Gambia, The" = "Gambia",
+                     "Laos" = "Lao People's Democratic Republic",
+                     "Marshall Islands, Republic of the" = "Marshall Islands",
+                     "Micronesia, Federate States of" = "Micronesia",
+                     "Burma" = "Myanmar",
+                     "South Korea" = "Republic of Korea",
+                     "Russia" = "Russian Federation",
+                     "São Tomé & Príncipe" = "Sao Tome and Principe",
+                     "Syria" = "Syrian Arab Republic",
+                     "Turkey" = "Türkiye")
+  )
+```
+
+Com o nome dos países padronizado, se procede para a junção final dos bancos dados, o qual agora registra o número correto de notações.
+
+```{r}
+df <- un_group %>%
+  left_join(population, by = "Country") %>%
+  left_join(students, by = "Country") %>%
+  drop_na()
+
+count(df)
+```
+
+A limpeza e organização do banco de dados é concluída com a criação da variável de interesse, `students_100k`, calculada a partir das variáveis `n_students` e `total_pop`. Aproveita-se, também, para reduzir as categorias da variável `UN group` às siglas de cada grupo regional, o que facilitará a visualização futura dos dados.
+
+```{r}
+df <- df %>%
+  mutate(students_100k = (n_students*100000)/total_pop) %>%
+  rename(country = Country, un_group = `UN group`) %>%
+  select(country, un_group, students_100k) %>%
+  mutate(un_group = recode(un_group,
+                           "African Group" = "AG",
+                           "Asia and Pacific Group" = "APG",
+                           "Eastern European Group (EEG)" = "EEG",
+                           "Latin American and Caribbean Group (GRULAC)" = "GRULAC",
+                           "Western European and other States Group (WEOG)" = "WEOG"))
+
+df %>%
+  arrange(desc(students_100k)) %>%
+  head()
+```
+
+## 3. Exploração inicial dos dados
+
+Via de regra, a análise de variância (ANOVA) demanda que os dados não apresentem outliers. Isso pode ser verificado através da função `rstatix::identify_outliers()`, assim como através de um gráfico de boxplot.
+
+```{r}
+df %>%
+  group_by(un_group) %>%
+  identify_outliers(students_100k)
+```
+
+```{r}
+boxplot(students_100k ~ un_group, data = df, 
+        ylab = "Estudantes por país (a cada 100mil habitantes)",
+        xlab = "Grupos regionais na ONU")
+```
+
+Foi possível identificar a presença de 16 observações contendo outliers, sendo que 10 dessas são outliers extremos. Adicionalmente, o boxplot revela que a distribuição dos dados é altamente distorcida, com uma longa cauda de um lado e a maior parte dos dados se agrupando do outro, sugerindo que uma transformação logarítmica pode ajudar na melhor visualização de um padrão nos dados.
+
+```{r}
+df <- df %>%
+  mutate(students_log = log(students_100k))
+
+boxplot(students_log ~ un_group, data = df, 
+        ylab = "Estudantes por país (logaritmizado)",
+        xlab = "Grupos regionais na ONU")
+```
+
+```{r}
+df %>%
+  group_by(un_group) %>%
+  identify_outliers(students_log)
+```
+
+O boxplot resultante ainda revela dois outliers, sendo que um deles (Coréia do Norte) trata-se de um caso extremo, o qual pode ter grande impacto no modelo. Assim, opta-se pela exclusão desses dados previamente à realização da análise de variância.
+
+```{r}
+df <- df %>%
+  filter(country != "Democratic People's Republic of Korea")
+```
+
+## 4. Análise de variância
+
+Para realização do teste de variância (ANOVA), aplica-se a função `aov()`, incluída como parte do R base. Além da localização da base de dados, ela leva como argumentos a variável de interesse, `students_log`, e a variável preditora, `un_group`.
+
+```{r}
+modelo <- aov(students_log ~ un_group, data = df)
+summary(modelo)
+```
+
+Os resultados do teste ANOVA mostram que há uma diferença significativa entre as médias dos grupos regionais. O valor de F de 25.86 e o valor p de 2e-16 sugerem que essa diferença é estatisticamente significativa, rejeitando a hipótese nula de que todas as médias seriam iguais.
+
+Visando identificar quais grupos apresentam médias diferentes, é realizado o teste posthoc de Tukey, fornecido pela função `stats::TukeyHSD`.
+
+```{r}
+TukeyHSD(modelo)
+```
+
+Considerando os valores ajustados do valor-p, verifica-se que:
+
+-   O Grupo Africano (AG) apresenta uma diferença com significância estatística \< 0.001 com todos os demais grupos;
+-   O Grupo Latino-Americano e Caribenho (GRULAC) também apresenta diferenças com significância estatística \< 0.01 com os grupos da Ásia e Pacífico (APG) e dos Estados do Leste Europeu (EEG);
+-   As demais combinações apresentaram um valor-p muito superior a 0.05, indicando que não é possível afirmar a existencia de diferença significativa entre esses grupos.
+
+O gráfico abaixo resume as os valores referentes a cada grupo, apresentando as médias no eixo y, junto com suas barras de erro.
+
+```{r}
+summary_stats <- df %>%
+  group_by(un_group) %>%
+  summarize(mean = mean(students_log),
+            sd = sd(students_log),
+            n = n())
+
+ggplot(summary_stats, aes(x = un_group, y = mean, fill = un_group)) +
+  geom_col(width = 0.7) +
+  geom_errorbar(aes(ymin = mean - sd/sqrt(n), ymax = mean + sd/sqrt(n)), width = 0.2) +
+  labs(x = "Grupos regionais na ONU", y = "Valor médio", title = "Médias por grupo") +
+  theme_classic()
+```
+
+## 5. Conclusões
+
+Baseado nos resultados da análise, é possível afirmar que o número de indivíduos matriculados em instituições de ensino estadunidenses de fato está relacionado a região sociopolítica de seus países de origem.
+
+Comparado aos demais grupos, é possível notar um efeito negativo no Grupo Africano (AG); enquanto o Grupo Latino-Americano e Caribenho (GRULAC) parece ter um efeito positivo, embora esse não seja significante quando feita a comparação com o grupo da Europa Ocidental e Outros (WEOG).
